@@ -193,7 +193,7 @@
         audioEl.id = eid;
         audioEl.autoplay = true;
         audioEl.autobuffer = false;
-        audioEl.crossOrigin = '*';
+        audioEl.crossOrigin = 'anonymous';
         audioEl.preload = 'auto';
         audioEl.src = url;
 
@@ -282,7 +282,7 @@
     <ol id="log" reversed></ol>
 
     <script>
-      // play(`https://vcdn.veervr.tv/audio/75bab0606e5c447bb524c57f16260e5f/index.mp3?sign=35a7816998169564018b34d27f424c26&t=5b6b8400&time=${new Date().getTime()}`, 'env');
+      play(`index.mp3`, 'env');
       status('no auido playing');
       const analyserWrapperEl = document.getElementById('analyserWrapper');
       const analyserEl = document.getElementById('analyser');
