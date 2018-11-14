@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh_CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="X-UA-Compatible" content="ie=edge" />
+    <title>Media Element Audio Source</title>
+    <style>
+      *,
+      *::before,
+      *::after {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      input#source {
+        width: 100%;
+      }
+
+      div#status {
+        text-decoration: underline;
+        height: 2em;
+        vertical-align: bottom;
+        border-top: dashed 1px #333;
+      }
+
+      ol#log {
+        list-style-type: decimal;
+        list-style-position: inside;
+      }
+
+      div#analyserWrapper {
+        width: 100%;
+        height: 128px;
+      }
+
+      div#analyserWrapper canvas#analyser {
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.3);
+      }
+    </style>
+  </head>
+
+  <body>
+    <h2>MediaElementAudioSource</h2>
+    <div id="audios"></div>
+    <script>
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      const context = new AudioContext();
+      if (
+        /(iPhone|iPad)/i.test(navigator.userAgent) &&
+        context.sampleRate !== 44100
+      ) {
+        const buffer = context.createBuffer(1, 1, 44100);
+        const dummy = context.createBufferSource();
+        dummy.buffer = buffer;
+        dummy.connect(context.destination);
+        dummy.start(0);
+        dummy.disconnect();
+
+        context.close();
+        context = new AudioContext();
+      }
+      const ctxCreatedAt = performance.now();
+
+      const callbacks = [];
+      let uid = null;
+      let WIDTH;
+      let HEIGHT;
+      let canvasCtx;
+      let requestingAnimationFrame;
+      let source;
+      let gain;
+      let analyser;
+
+      function resumeAudioContext(e) {
+        if (context) {
+          context.resume();
+          while (callbacks.length) {
+            callbacks.shift()();
+          }
+          log('recovered');
+
+          // document.removeEventListener('touchstart', resumeAudioContext);
+          // document.removeEventListener('mousedown', resumeAudioContext);
+        }
+      }
+
+      document.addEventListener('touchstart', resumeAudioContext);
+      document.addEventListener('mousedown', resumeAudioContext);
+
+      window.addEventListener('unload', () => {
+        if (source) {
+          source.disconnect();
+          source = null;
+        }
+        if (gain) {
+          gain.disconnect();
+          gain = null;
+        }
+        if (analyser) {
+          analyser.disconnect();
+          analyser = null;
+        }
+        context.close();
+      });
+
+      function log(text) {
+        const logEl = document.getElementById('log');
+
+        const liEl = document.createElement('li');
+        liEl.innerText = text;
+
+        if (logEl.firstElementChild) {
+          logEl.insertBefore(liEl, logEl.firstElementChild);
+        } else {
+          logEl.appendChild(liEl);
+        }
+      }
+
+      function status(text) {
+        const statusEl = document.getElementById('status');
+        statusEl.innerText = text;
+      }
+
+      function draw(analyser, bufferLength, dataArray) {
+        if (!canvasCtx || !WIDTH || !HEIGHT) return;
+
+        canvasCtx.clearRect(0, 0, WIDTH, HEIGHT);
+
+        analyser.getByteTimeDomainData(dataArray);
+
+        canvasCtx.fillStyle = 'rgb(200, 200, 200)';
+        canvasCtx.fillRect(0, 0, WIDTH, HEIGHT);
+
+        canvasCtx.lineWidth = 2;
+        canvasCtx.strokeStyle = 'rgb(0, 0, 0)';
+
+        canvasCtx.beginPath();
+
+        var sliceWidth = (WIDTH * 1.0) / bufferLength;
+        var x = 0;
+
+        for (var i = 0; i < bufferLength; i++) {
+          var v = dataArray[i] / 128.0;
+          var y = (v * HEIGHT) / 2;
+
+          if (i === 0) {
+            canvasCtx.moveTo(x, y);
+          } else {
+            canvasCtx.lineTo(x, y);
+          }
+
+          x += sliceWidth;
+        }
+
+        canvasCtx.lineTo(WIDTH, HEIGHT / 2);
+        canvasCtx.stroke();
+
+        requestingAnimationFrame = requestAnimationFrame(() =>
+          draw(analyser, bufferLength, dataArray)
+        );
+      }
+
+      function start(audioEl, tuid) {
+        if (tuid !== uid) return;
+        audioEl.play().catch(() => {
+          callbacks.push(() => {
+            audioEl.play();
+            log('Called callback()');
+          });
+          log('Permission Denied! Pushed callback');
+        });
+      }
+
+      function play(url, sync) {
+        if (performance.now() - ctxCreatedAt < 1000) {
+          setTimeout(play, 1000, url, false);
+          log('wait for context becoming ready');
+          return;
+        }
+
+        if (uid) {
+          stopSource();
+        }
+        uid = performance.now().toFixed(0);
+
+        const eid = `audio-${uid}`;
+        const audiosEl = document.getElementById('audios');
+        const audioEl = document.createElement('audio');
+        audioEl.id = eid;
+        audioEl.autoplay = true;
+        audioEl.autobuffer = false;
+        audioEl.crossOrigin = '*';
+        audioEl.preload = 'auto';
+        audioEl.src = url;
+
+        audioEl.addEventListener('timeupdate', () => {
+          uid &&
+            status(
+              `audio-${uid} playing at ${audioEl.currentTime.toFixed(0)}s`
+            );
+          !uid && status('no auido playing');
+        });
+
+        audiosEl.appendChild(audioEl);
+        status(`audio-${uid} loading...`);
+
+        if (source) {
+          source.disconnect();
+          source = null;
+        }
+        source = context.createMediaElementSource(audioEl);
+
+        if (gain) {
+          gain.disconnect();
+          gain = null;
+        }
+        gain = context.createGain();
+        gain.gain.value = 1.0;
+
+        if (analyser) {
+          analyser.disconnect();
+          analyser = null;
+        }
+        analyser = context.createAnalyser();
+        analyser.fftSize = 2048;
+        const bufferLength = analyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+
+        source.connect(gain);
+        gain.connect(analyser);
+        analyser.connect(context.destination);
+
+        requestingAnimationFrame &&
+          cancelAnimationFrame(requestingAnimationFrame);
+        requestingAnimationFrame = requestAnimationFrame(() =>
+          draw(analyser, bufferLength, dataArray)
+        );
+
+        const src = sync.length ? sync : 'input';
+        if (sync) {
+          start(audioEl, uid);
+          log(`${src} -> ${eid} -> sync call play()`);
+        } else {
+          setTimeout(start, 1000, audioEl, uid);
+          log(`${src} -> ${eid} -> async call play()`);
+        }
+      }
+
+      function playSource(sync) {
+        const source = document.getElementById('source');
+        play(`${source.value}&time=${new Date().getTime()}`, sync);
+      }
+
+      function stopSource() {
+        if (!uid) return;
+        const eid = `audio-${uid}`;
+        const toDelEl = document.getElementById(eid);
+        toDelEl.pause();
+        toDelEl.parentElement.removeChild(toDelEl);
+        uid = null;
+        log(`cleared ${eid}`);
+      }
+    </script>
+
+    <h4>
+      Other Tests: <a href="./index.html">全部文件解码方式</a>
+      <a href="./streaming.html">流式解码方式</a>
+    </h4>
+    <br />
+    <input id="source" type="text" value="spanish-guitar-cutted.mp3" /> <br />
+    <button onclick="playSource(false);">Test Async</button>
+    <button onclick="playSource(true);">Test Sync</button>
+    <button onclick="stopSource();">Stop</button> <br />
+    <br />
+
+    <div id="analyserWrapper"><canvas id="analyser"></canvas></div>
+    <div id="status"></div>
+    <ol id="log" reversed></ol>
+
+    <script>
+      // play(`https://vcdn.veervr.tv/audio/75bab0606e5c447bb524c57f16260e5f/index.mp3?sign=35a7816998169564018b34d27f424c26&t=5b6b8400&time=${new Date().getTime()}`, 'env');
+      status('no auido playing');
+      const analyserWrapperEl = document.getElementById('analyserWrapper');
+      const analyserEl = document.getElementById('analyser');
+      const pixelRatio = window.devicePixelRatio;
+      WIDTH = analyserEl.width = analyserWrapperEl.clientWidth * pixelRatio;
+      HEIGHT = analyserEl.height = analyserWrapperEl.clientHeight * pixelRatio;
+      canvasCtx = analyserEl.getContext('2d');
+      canvasCtx.clearRect(0, 0, WIDTH, HEIGHT);
+    </script>
+  </body>
+</html>

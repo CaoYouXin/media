@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh_CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="X-UA-Compatible" content="ie=edge" />
+    <title>Streaming Audio</title>
+  </head>
+
+  <body>
+    <script>
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      const context = new AudioContext();
+
+      function onTouchStart(e) {
+        if (context && context.state === 'suspended') {
+          context.resume();
+          document.removeEventListener('touchstart', onTouchStart);
+          document.removeEventListener('mousedown', onMouseDown);
+        }
+      }
+
+      function onMouseDown(e) {
+        if (context && context.state === 'suspended') {
+          context.resume();
+          document.removeEventListener('touchstart', onTouchStart);
+          document.removeEventListener('mousedown', onMouseDown);
+        }
+      }
+
+      document.addEventListener('touchstart', onTouchStart);
+      document.addEventListener('mousedown', onMouseDown);
+
+      function log(text) {
+        const log = document.getElementById('log');
+
+        const p = document.createElement('p');
+        p.innerText = text;
+        log.appendChild(p);
+      }
+
+      function play(url) {
+        var BUFFER_LEN = 10;
+
+        var context = new (window.AudioContext || window.webkitAudioContext)();
+        var audioSourceStack = [];
+        var audioStack = [];
+        var reader = null;
+
+        function read() {
+          if (!reader) return;
+
+          return reader.read().then(({ value, done }) => {
+            let size = 0;
+            // log('enque decode schedule', value);
+            size = value.buffer.byteLength / 1024 / 1024;
+            log('enque decode schedule ' + size.toFixed(2) + 'MB');
+
+            audioSourceStack.push(value.buffer);
+            if (audioSourceStack.length) {
+              scheduleDecoder();
+            }
+            if (done) {
+              log('done');
+              return;
+            }
+          });
+        }
+
+        let decoding = false;
+        function scheduleDecoder() {
+          if (!decoding && audioSourceStack.length) {
+            decoding = true;
+            var source = audioSourceStack.shift();
+            context.decodeAudioData(
+              source,
+              buffer => {
+                audioStack.push(buffer);
+                const size = (buffer.length * 4) / 1024 / 1024;
+                log('added a part of audio buffer ' + size.toFixed(2) + 'MB');
+
+                if (audioStack.length) {
+                  scheduleBuffers();
+                }
+
+                decoding = false;
+                scheduleDecoder();
+              },
+              error => {
+                log('decode error', error);
+
+                decoding = false;
+                scheduleDecoder();
+              }
+            );
+
+            if (audioStack.length < BUFFER_LEN) {
+              read();
+            }
+          }
+        }
+
+        let playing = false;
+        function scheduleBuffers() {
+          if (!playing && audioStack.length) {
+            playing = true;
+            var buffer = audioStack.shift();
+            var source = context.createBufferSource();
+            source.buffer = buffer;
+            source.connect(context.destination);
+            source.onended = () => {
+              playing = false;
+              scheduleBuffers();
+
+              if (audioStack.length < BUFFER_LEN) {
+                read();
+              }
+            };
+            source.start(0);
+            log('playing another part buffer');
+          }
+        }
+
+        fetch(url).then(function(response) {
+          reader = response.body.getReader();
+
+          read();
+        });
+      }
+
+      function playSource() {
+        const source = document.getElementById('source');
+        play(source.value);
+      }
+    </script>
+
+    <input id="source" type="text" value="spanish-guitar-cutted.mp3" />
+    <button onclick="playSource();">Test Streaming Audio</button> <br />
+    <br />
+    <a href="./index.html">全部文件解码方式</a>
+    <a href="./medianode.html">MediaNode解码方式</a>
+
+    <div id="performance"></div>
+    <div id="log"></div>
+  </body>
+</html>

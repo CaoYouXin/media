@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="zh_CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="X-UA-Compatible" content="ie=edge" />
+    <title>Audio</title>
+  </head>
+
+  <body>
+    <script>
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      const context = new AudioContext();
+
+      function onTouchStart(e) {
+        if (context && context.state === 'suspended') {
+          context.resume();
+          document.removeEventListener('touchstart', onTouchStart);
+          document.removeEventListener('mousedown', onMouseDown);
+        }
+      }
+
+      function onMouseDown(e) {
+        if (context && context.state === 'suspended') {
+          context.resume();
+          document.removeEventListener('touchstart', onTouchStart);
+          document.removeEventListener('mousedown', onMouseDown);
+        }
+      }
+
+      document.addEventListener('touchstart', onTouchStart);
+      document.addEventListener('mousedown', onMouseDown);
+
+      function log(text) {
+        const log = document.getElementById('log');
+
+        const p = document.createElement('p');
+        p.innerText = text;
+        log.appendChild(p);
+      }
+
+      let ran = false;
+      function startTest(url) {
+        // if (ran) {
+        //   alert('Reload page to Retry.');
+        //   return;
+        // }
+        // ran = true;
+
+        const xhr = new XMLHttpRequest();
+        // xhr.open('GET', './9.4_320kbps.mp3');
+        xhr.open('GET', url);
+        xhr.responseType = 'arraybuffer';
+
+        xhr.onload = function() {
+          if (xhr.status === 200) {
+            log('file downloaded, start decoding...');
+            context.decodeAudioData(
+              xhr.response,
+              function(buffer) {
+                log(`
+                    duration=${Math.floor(buffer.duration / 60)}m${Math.floor(
+                  buffer.duration % 60
+                )}s;
+                    size=${((4 * buffer.length) / 1024 / 1024).toFixed(2)}MB
+                    `);
+                log('file decoded');
+                const sourceNode = context.createBufferSource();
+                log('source node created');
+                sourceNode.buffer = buffer;
+                log('source node buffer set');
+                sourceNode.start(0, 0);
+
+                const gain = context.createGain();
+                gain.gain.value = 1.0;
+
+                sourceNode.connect(gain);
+                gain.connect(context.destination);
+
+                log('source node connected to destination, playing...');
+              },
+              function(message) {
+                log(
+                  '[VRAudioBufferSource] Decoding failure: ' +
+                    url +
+                    ' (' +
+                    message +
+                    ')'
+                );
+              }
+            );
+          } else {
+            log(
+              '[VRAudioBufferSource] XHR Error: ' +
+                url +
+                ' (' +
+                xhr.statusText +
+                ')'
+            );
+          }
+        };
+
+        xhr.onerror = function(event) {
+          log('[VRAudioBufferSource] XHR Network failure: ' + url);
+        };
+
+        xhr.send();
+        log('start downloading file');
+      }
+
+      function startTestN() {
+        if (ran) {
+          alert('Reload page to Retry.');
+          return;
+        }
+        ran = true;
+
+        const source = document.getElementById('source');
+
+        for (let i = 0; i < 1; i++) {
+          setTimeout(startTest, 0, source.value);
+        }
+      }
+
+      function showPerformance() {
+        // const total = (performance.memory.totalJSHeapSize / 1024 / 1024).toFixed(2);
+        // const limit = (performance.memory.jsHeapSizeLimit / 1024 / 1024).toFixed(2);
+
+        // console.log(performance.memory, total, limit);
+
+        const performanceEl = document.getElementById('performance');
+        performanceEl.innerText = `
+              JS Heap: ${total}MB/${limit}MB
+            `;
+
+        requestAnimationFrame(showPerformance);
+      }
+      requestAnimationFrame(showPerformance);
+    </script>
+
+    <input id="source" type="text" value="spanish-guitar-cutted.mp3" />
+    <button onclick="startTestN()">Test WebAudioContext</button> <br />
+    <br />
+    <a href="./streaming.html">流式解码方式</a>
+    <a href="./medianode.html">MediaNode解码方式</a>
+
+    <div id="performance"></div>
+    <div id="log"></div>
+  </body>
+</html>
